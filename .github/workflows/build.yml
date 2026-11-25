@@ -56,14 +56,25 @@ jobs:
             echo "storeFile=upload-keystore.jks"
           } > android/key.properties
 
-      - run: flutter build apk --release
+      # Un APK par architecture (arm64 pour les téléphones récents, armeabi-v7a pour les anciens) :
+      # ~3 fois plus léger qu'un APK « universel ». L'AAB sert au Play Store, qui livre le bon fichier à chaque appareil.
+      - run: flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64
       - run: flutter build appbundle --release
+
+      - name: Vérifier la signature et la version Android minimale
+        run: |
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          for f in build/app/outputs/flutter-apk/app-*-release.apk; do
+            echo "=== $f ($(du -h "$f" | cut -f1))"
+            "$BT/apksigner" verify --print-certs "$f" | grep -E "Signer #1 certificate (DN|SHA-256)"
+            "$BT/aapt2" dump badging "$f" | grep -E "^package:|^sdkVersion|^targetSdkVersion" | cut -c1-120
+          done
 
       - uses: actions/upload-artifact@v4
         with:
           name: bomoko-lexika-android
           path: |
-            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/flutter-apk/app-*-release.apk
             build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
 
@@ -111,7 +122,10 @@ jobs:
 
       - name: Renommer les fichiers
         run: |
-          mv "$(find dist -name app-release.apk)" "dist/bomoko-lexika-${GITHUB_REF_NAME}.apk"
+          for f in $(find dist -name 'app-*-release.apk'); do
+            abi="$(basename "$f" | sed -E 's/^app-(.*)-release\.apk$/\1/')"
+            mv "$f" "dist/bomoko-lexika-${GITHUB_REF_NAME}-${abi}.apk"
+          done
           mv "$(find dist -name app-release.aab)" "dist/bomoko-lexika-${GITHUB_REF_NAME}.aab"
 
       - uses: softprops/action-gh-release@v2
@@ -120,3 +134,4 @@ jobs:
             dist/bomoko-lexika-*.apk
             dist/bomoko-lexika-*.aab
           generate_release_notes: true
+          
